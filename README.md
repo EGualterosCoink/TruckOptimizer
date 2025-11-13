@@ -66,6 +66,16 @@ En `assets/templates` hay ejemplos de archivos:
 ## Exportables
 - Plan de carga (TXT)
 - Métricas por vehículo (CSV)
+- 
+## Comandos en powershell
+- Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+- cd "C:\Users\Estefany Gualteros\Downloads\TruckOptimizer"
+- .\.venv\Scripts\Activate.ps1
+- pip install -r requirements.txt
+- python -m pip install --upgrade pip
+- python -m pip install -r requirements.txt
+- streamlit run app.py
+- python -m streamlit run app.py
 
 ## Estructura
 ```
