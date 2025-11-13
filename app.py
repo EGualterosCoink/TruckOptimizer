@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import plotly.express as px
 
 from models.entities import Fleet
 from models.io_utils import read_table, build_fleet_from_df, build_products_from_df
@@ -16,7 +17,7 @@ from models.metrics import build_plan_text, compute_metrics_df, compute_totals
 st.set_page_config(page_title="TruckOptimizer", page_icon="🚚", layout="wide")
 
 st.title("🚚 TruckOptimizer")
-st.caption("Optimización de carga y asignación de vehículos — versión local académica")
+st.caption("Optimización de carga y asignación de vehículos")
 
 if "fleet_ready" not in st.session_state:
     st.session_state["fleet_ready"] = False
@@ -29,15 +30,36 @@ if "products_df" not in st.session_state:
 
 st.markdown("### 1) Parametrización de **Flota**")
 st.write("Formato requerido (.csv/.xlsx) con columnas obligatorias:")
-st.code("Tipo de camión | Peso que puede cargar (kg) | Tarifa por kilómetro recorrido | Cantidad [| Distancia (km) opcional]", language="text")
-fleet_file = st.file_uploader("Cargar archivo de flota", type=["csv", "xlsx"], key="fleet_uploader")
-distancia_global = st.number_input("Distancia (km) global (se usará si el archivo no trae 'Distancia (km)')", min_value=0.0, step=10.0, value=0.0)
+st.code(
+    "Tipo de camión | Peso que puede cargar (kg) | Tarifa por kilómetro recorrido | Cantidad",
+    language="text",
+)
 
-col_a, col_b = st.columns([1,1])
+fleet_file = st.file_uploader(
+    "Cargar archivo de flota",
+    type=["csv", "xlsx"],
+    key="fleet_uploader",
+)
+
+# Esta distancia se usará SIEMPRE para todos los camiones
+distancia_global = st.number_input(
+    "Distancia (km) que recorrerán todos los camiones",
+    min_value=0.0,
+    step=10.0,
+    value=0.0,
+    help="Obligatorio: esta distancia se aplica a todos los camiones. Cualquier distancia en el Excel será ignorada.",
+)
+
+col_a, col_b = st.columns([1, 1])
 with col_a:
     if st.button("Cargar Flota", use_container_width=True):
         if not fleet_file:
             st.error("No se ha cargado ningún archivo.")
+        elif distancia_global is None or distancia_global <= 0:
+            st.error(
+                "Debes ingresar una distancia mayor a 0 km en el campo "
+                "'Distancia (km) que recorrerán todos los camiones'."
+            )
         else:
             ok, msg = validate_extension(fleet_file.name)
             if not ok:
@@ -46,8 +68,10 @@ with col_a:
                 try:
                     df = read_table(fleet_file.getvalue(), fleet_file.name)
                     st.write("Columnas leídas:", list(df.columns))
+
                     # --- (A) Normaliza a encabezados del DOC antes de validar ---
                     import unicodedata, re
+
                     def _canon(s: str) -> str:
                         s = unicodedata.normalize("NFKD", str(s))
                         s = "".join(ch for ch in s if not unicodedata.combining(ch))
@@ -73,7 +97,7 @@ with col_a:
                         "tarifa km": "tarifa por kilómetro recorrido",
                         # Cantidad
                         "cantidad": "cantidad",
-                        # Distancia (opcional)
+                        # Distancia (si viene, la ignoraremos luego)
                         "distancia (km)": "distancia (km)",
                         "distancia km": "distancia (km)",
                         "distancia_km": "distancia (km)",
@@ -87,17 +111,23 @@ with col_a:
                         st.error(msg2)
                     else:
                         # --- (C) Renombra a llaves internas para los modelos ---
-                        df = df.rename(columns={
-                            "tipo de camión": "tipo_camion",
-                            "peso que puede cargar (kg)": "capacidad_kg",
-                            "tarifa por kilómetro recorrido": "tarifa_km",
-                            "cantidad": "cantidad",
-                            "distancia (km)": "distancia_km",
-                        })
+                        df = df.rename(
+                            columns={
+                                "tipo de camión": "tipo_camion",
+                                "peso que puede cargar (kg)": "capacidad_kg",
+                                "tarifa por kilómetro recorrido": "tarifa_km",
+                                "cantidad": "cantidad",
+                                "distancia (km)": "distancia_km",
+                            }
+                        )
                         # (por si viene ya como 'distancia_km')
                         df.columns = [c.strip().lower() for c in df.columns]
 
-                        fleet = build_fleet_from_df(df.copy(), distancia_global_km=distancia_global)
+                        # 👇 Aquí ya se usa SOLO la distancia_global que escribió el usuario
+                        fleet = build_fleet_from_df(
+                            df.copy(),
+                            distancia_global_km=distancia_global,
+                        )
                         st.session_state["fleet"] = fleet
                         st.session_state["fleet_df"] = df
                         st.session_state["fleet_ready"] = True
@@ -116,9 +146,15 @@ st.divider()
 st.markdown("### 2) Carga de **Productos** y cálculo de optimización")
 st.write("Formato requerido (.csv/.xlsx) con columnas obligatorias:")
 st.code("Producto | Peso | Valor | Cantidad", language="text")
-products_file = st.file_uploader("Cargar archivo de productos", type=["csv", "xlsx"], key="products_uploader")
 
-calc_col1, calc_col2 = st.columns([1,2])
+products_file = st.file_uploader(
+    "Cargar archivo de productos",
+    type=["csv", "xlsx"],
+    key="products_uploader",
+)
+
+calc_col1, calc_col2 = st.columns([1, 2])
+
 with calc_col1:
     if st.button("Calcular Optimización", use_container_width=True):
         if not st.session_state["fleet_ready"]:
@@ -131,19 +167,31 @@ with calc_col1:
                 st.error(msg)
             else:
                 try:
+                    # Leer archivo
                     dfp = read_table(products_file.getvalue(), products_file.name)
-                    okp, msgp = validate_products_df(dfp.copy(), st.session_state["fleet"])
+
+                    # 👉 Mostrar columnas igual que en flota
+                    st.write("Columnas leídas (productos):", list(dfp.columns))
+
+                    # Validar contra la flota cargada
+                    okp, msgp = validate_products_df(
+                        dfp.copy(), st.session_state["fleet"]
+                    )
                     if not okp:
                         st.error(msgp)
                     else:
                         # Normaliza encabezados
                         dfp.columns = [c.strip().lower() for c in dfp.columns]
+
+                        # Construir productos y resolver optimización
                         products = build_products_from_df(dfp.copy())
                         opt = Optimizer(products, st.session_state["fleet"])
                         result = opt.build_and_solve()
+
                         if result.status not in ("Optimal", "Feasible"):
                             st.error("No fue posible encontrar una solución factible.")
                         else:
+                            # Guardar en sesión para usar y mostrar la tablita
                             st.session_state["products_df"] = dfp
                             st.session_state["opt_result"] = result
                             st.session_state["products"] = products
@@ -153,9 +201,18 @@ with calc_col1:
                     st.error(f"Error al calcular la optimización: {e}")
                     st.exception(e)
 
-
 with calc_col2:
-    st.info("Ayuda contextual: Cargue primero la flota. El sistema valida columnas, datos nulos, duplicados, valores negativos / cero y productos no contemplados.")
+    # 👉 Tablita como la de flota, pero para productos
+    if "products_df" in st.session_state:
+        with st.expander("Ver productos procesados"):
+            st.dataframe(st.session_state["products_df"])
+
+    # Mensaje de ayuda (lo dejamos)
+    st.info(
+        "Ayuda contextual: cargue primero la flota. "
+        "El sistema validará pesos, valores, cantidades, posibles duplicados "
+        "y productos inconsistentes respecto a la flota."
+    )
 
 st.divider()
 
@@ -183,38 +240,72 @@ if "opt_result" in st.session_state:
     m4.metric("Valor total transportado", f"${valor_total:,.2f}")
 
     # Gráfico: Kg usados por vehículo
-    st.markdown("##### Kg usados por vehículo")
-    fig1, ax1 = plt.subplots()
-    ax1.bar(df_metrics["vehiculo_id"], df_metrics["kg_usados"])
-    ax1.set_xlabel("Vehículo")
-    ax1.set_ylabel("Kg usados")
-    ax1.set_xticklabels(df_metrics["vehiculo_id"], rotation=45, ha="right")
-    st.pyplot(fig1, clear_figure=True)
+        # --- Gráficas interactivas ---
+    st.markdown("### Visualización de métricas")
 
-    # Gráfico: costo por tipo de vehículo (agrupado)
-    st.markdown("##### Costo de transporte por tipo de vehículo")
-    df_cost_tipo = df_metrics.groupby("tipo", as_index=False)["costo_transporte"].sum()
-    fig2, ax2 = plt.subplots()
-    ax2.bar(df_cost_tipo["tipo"], df_cost_tipo["costo_transporte"])
-    ax2.set_xlabel("Tipo de vehículo")
-    ax2.set_ylabel("Costo transporte")
-    st.pyplot(fig2, clear_figure=True)
+    tab_kg, tab_costo, tab_valor = st.tabs(
+        ["Kg usados por vehículo", "Costo por tipo de vehículo", "Valor transportado"]
+    )
 
-    # Gráfico: valor transportado por vehículo
-    st.markdown("##### Valor total transportado por vehículo")
-    fig3, ax3 = plt.subplots()
-    ax3.bar(df_metrics["vehiculo_id"], df_metrics["valor_transportado"])
-    ax3.set_xlabel("Vehículo")
-    ax3.set_ylabel("Valor transportado")
-    ax3.set_xticklabels(df_metrics["vehiculo_id"], rotation=45, ha="right")
-    st.pyplot(fig3, clear_figure=True)
+    # 🧱 Tab 1: Kg usados por vehículo
+    with tab_kg:
+        st.markdown("##### Kg usados por vehículo")
+        fig_kg = px.bar(
+            df_metrics,
+            x="vehiculo_id",
+            y="kg_usados",
+            labels={
+                "vehiculo_id": "Vehículo",
+                "kg_usados": "Kg usados",
+            },
+            title="Kg usados por vehículo",
+        )
+        fig_kg.update_layout(
+            xaxis_tickangle=-45,
+            height=450,
+            margin=dict(l=40, r=20, t=60, b=80),
+        )
+        st.plotly_chart(fig_kg, use_container_width=True)
 
-    # Descargas
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        st.download_button("Descargar métricas (CSV)", data=df_metrics.to_csv(index=False).encode("utf-8"), file_name="metricas_por_vehiculo.csv", mime="text/csv", use_container_width=True)
-    with col_d2:
-        st.download_button("Descargar plan de carga (TXT)", data=(plan_text or "").encode("utf-8"), file_name="plan_carga.txt", mime="text/plain", use_container_width=True)
+    # 🧱 Tab 2: Costo por tipo de vehículo
+    with tab_costo:
+        st.markdown("##### Costo de transporte por tipo de vehículo")
+        df_cost_tipo = df_metrics.groupby("tipo", as_index=False)["costo_transporte"].sum()
+        fig_costo = px.bar(
+            df_cost_tipo,
+            x="tipo",
+            y="costo_transporte",
+            labels={
+                "tipo": "Tipo de vehículo",
+                "costo_transporte": "Costo de transporte",
+            },
+            title="Costo total de transporte por tipo de vehículo",
+        )
+        fig_costo.update_layout(
+            height=450,
+            margin=dict(l=40, r=20, t=60, b=80),
+        )
+        st.plotly_chart(fig_costo, use_container_width=True)
+
+    # 🧱 Tab 3: Valor transportado por vehículo
+    with tab_valor:
+        st.markdown("##### Valor total transportado por vehículo")
+        fig_valor = px.bar(
+            df_metrics,
+            x="vehiculo_id",
+            y="valor_transportado",
+            labels={
+                "vehiculo_id": "Vehículo",
+                "valor_transportado": "Valor transportado",
+            },
+            title="Valor transportado por vehículo",
+        )
+        fig_valor.update_layout(
+            xaxis_tickangle=-45,
+            height=450,
+            margin=dict(l=40, r=20, t=60, b=80),
+        )
+        st.plotly_chart(fig_valor, use_container_width=True)
 
 else:
     st.warning("Para ver resultados, complete los pasos 1 y 2 y ejecute la optimización.")

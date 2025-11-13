@@ -25,31 +25,36 @@ def read_table(file_bytes: bytes, file_name: str) -> pd.DataFrame:
     else:
         raise ValueError("Formato o extensión de archivo no válido.")
 
-
 def build_fleet_from_df(df: pd.DataFrame, distancia_global_km: float | None = None):
     # Ya normalizado en validators
-    # Esperamos columnas: tipo_camion, capacidad_kg, tarifa_km, cantidad (+ opcional distancia_km)
+    # Esperamos columnas: tipo_camion, capacidad_kg, tarifa_km, cantidad.
+    # Cualquier columna de distancia que venga en el DF se ignora.
     vehicles = []
     counters_per_type = {}
+
+    # Distancia que se aplicará a TODOS los camiones
+    distancia_default = float(distancia_global_km or 0.0)
+
     for _, row in df.iterrows():
         tipo = str(row["tipo_camion"]).strip()
         capacidad = float(row["capacidad_kg"])
         tarifa = float(row["tarifa_km"])
         cantidad = int(row["cantidad"])
-        distancia = None
-        if "distancia_km" in df.columns and pd.notna(row.get("distancia_km", None)):
-            try:
-                distancia = float(row["distancia_km"])
-            except Exception:
-                distancia = None
-        if distancia is None:
-            distancia = float(distancia_global_km or 0.0)
 
         counters_per_type.setdefault(tipo, 0)
         for _i in range(cantidad):
             counters_per_type[tipo] += 1
             veh_id = f"{tipo}-{counters_per_type[tipo]}"
-            vehicles.append(Vehicle(id=veh_id, tipo=tipo, capacidad_kg=capacidad, tarifa_km=tarifa, distancia_km=distancia))
+            vehicles.append(
+                Vehicle(
+                    id=veh_id,
+                    tipo=tipo,
+                    capacidad_kg=capacidad,
+                    tarifa_km=tarifa,
+                    distancia_km=distancia_default,  # 👈 SIEMPRE la global
+                )
+            )
+
     return Fleet(vehicles)
 
 def build_products_from_df(df: pd.DataFrame):

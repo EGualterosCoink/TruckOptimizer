@@ -1,4 +1,4 @@
-tipo de camion,peso que puede cargar (kg),tarifa por kilometro recorrido,cantidad,distancia (km)
-mediano,3000,1.8,2,120
-regido,7000,2.5,1,120
-tractocamion,20000,4.5,1,120
+tipo de camion,peso que puede cargar (kg),tarifa por kilometro recorrido,cantidad
+mediano,3000,1.8,2
+regido,7000,2.5,1
+tractocamion,20000,4.5,1
